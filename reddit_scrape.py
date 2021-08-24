@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
 import argparse
+import datetime
 import json
 import os
+import random
 import re
 import sys
 
@@ -11,7 +13,6 @@ try:
 except ImportError:
     from urllib import urlretrieve
     from urllib2 import Request, urlopen
-
 
 class RedditScrape(object):
     PROFILE_URL = 'https://www.reddit.com/user/{}/submitted.json'
@@ -30,6 +31,7 @@ class RedditScrape(object):
         user_url = self.PROFILE_URL.format(self.username)
 
         count = 0
+        countWithoutFail = 0
 
         while True:
             req = Request(user_url)
@@ -40,20 +42,40 @@ class RedditScrape(object):
             posts = payload['data']['children']
 
             for post in posts:
-                url = post['data']['url']
-                if re.search('(jpg|jpeg|png|gif)', url):
-                    filename = re.match('https://i.redd.it\/(\w+\.\w+)', url)
-                    if not filename:
-                        # Old imgur links
-                        filename = re.match('http://i.imgur.com\/(\w+\.\w+)', url)
-                    try:
-                        filename = filename.group(1)
-                    except AttributeError:
-                        # Unknown url format
-                        continue
+                countWithoutFail += 1
+		try:
+		    title = post['data']['title']
+                    UTC_datetime_timestamp = float(post['data']['created_utc'])
+                    local_datetime_converted = datetime.datetime.fromtimestamp(UTC_datetime_timestamp)
 
-                    if self.prefix:
-                        filename = '{}-{}'.format(self.prefix, filename)
+		    #sys.stdout.write('Title: ' + title + '\n\n')
+                    errorUrl = post['data']['url']
+                    url = post['data']['secure_media']['oembed']['thumbnail_url']
+		except (TypeError, KeyError) as e:
+		    #sys.stdout.write('Error: ' + str(e) + '\n')
+                    sys.stdout.write('<a href="' + errorUrl + '">' + title + '</a>\n')
+		    continue
+
+                if re.search('(jpg|jpeg|png|gif)', url):
+
+                    if url[len(url)-2:] == 'fb':
+                        url = url[:len(url)-2]
+
+                    #filename = re.match('https://i.redd.it\/(\w+\.\w+)', url)
+                    #if not filename:
+                        # Old imgur links
+                    #    filename = re.match('https://i.imgur.com\/(\w+\.\w+)', url)
+                    #try:
+                    #    filename = filename.group(1)
+                    #except AttributeError:
+                    #    # Unknown url format
+                    #    continue
+
+                    #if self.prefix:
+                    #    filename = '{}-{}'.format(self.prefix, filename)
+
+		    filename = str(local_datetime_converted) + ' - ' + title + '.jpg'
+                    #sys.stdout.write('\n' + filename + '\n')
 
                     if not self.dry_run:
                         path = os.path.join(self.directory, filename)
@@ -61,9 +83,14 @@ class RedditScrape(object):
                         # Check if file already exists
                         if not os.path.isfile(path):
                             urlretrieve(url, path)
+			else:
+                            path = os.path.join(self.directory, filename + str(random.randint(1000,9999)))
+                            urlretrieve(url, path)
 
-                    sys.stdout.write('.')
-                    sys.stdout.flush()
+                        set_comment(path, errorUrl)
+
+                    #sys.stdout.write('.')
+                    #sys.stdout.flush()
                     count += 1
 
             if payload['data']['after']:
@@ -73,6 +100,7 @@ class RedditScrape(object):
 
         sys.stdout.write('\n')
         print('{} saved.'.format(count))
+        print('{} attempted.'.format(countWithoutFail))
 
 def main():
     parser = argparse.ArgumentParser(description="Reddit simple media scraper.")
@@ -86,6 +114,10 @@ def main():
 
     scraper = RedditScrape(args.username, args.directory, args.dry_run, args.prefix)
     scraper.scrape()
+
+def set_comment(file_path, comment_text):
+    import py_applescript
+    applescript.tell.app("Finder", 'set comment of (POSIX file "{}" as alias) to "{}" as Unicode text'.format(file_path, comment_text))
 
 
 if __name__ == '__main__':
